@@ -1,0 +1,2 @@
+1. kindly turnoff the windows defender setting initially for app to run.
+2. Kindly feed small datasets to the app with some intervals. The app scraps the google for indexing data and Google may block your IP for scrapping.

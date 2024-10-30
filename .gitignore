@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+seo_data_extraction_env/
+env/
+venv/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+data/output/
+logs/
+*.log
+autosave.json
+
+# Packaging
+dist/
+build/
+*.egg-info/
+
+# PyInstaller
+# *.spec
+
+# CSV and other data files (uncomment if you don't want to track these)
+*.csv
+# *.json
+
+# Sensitive information
+# .env
+
+# Temporary files
+*.tmp
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+*.iml

@@ -1,0 +1,80 @@
+name: Build Windows Application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+    - name: Create dummy .env file
+      run: |
+        if (!(Test-Path .env)) {
+          New-Item -Path .env -ItemType File
+          Add-Content -Path .env -Value "# This is a dummy .env file for GitHub Actions"
+        }
+    - name: Update .spec file
+      run: |
+        $content = Get-Content SEODataExtraction.spec -Raw
+        $content = $content -replace "datas=\[.*?\]", "datas=[('src', 'src'), ('.env', '.')]"
+        $content = $content -replace "hiddenimports=\[.*?\]", "hiddenimports=['logging', 'asyncio', 'aiohttp', 'PyQt6']"
+        $content = $content -replace "console=True", "console=False"
+        $content = $content -replace "\['.*?main\.py'\]", "['main.py']"
+        $content = $content -replace "upx=True", "upx=False"
+        $content = $content -replace "upx_exclude=\[\]", "upx_exclude=None"
+        $content | Set-Content SEODataExtraction.spec
+    - name: Build with PyInstaller
+      run: pyinstaller SEODataExtraction.spec
+    - name: Create README
+      run: |
+        @"
+        # SEO Data Extraction Tool
+        
+        ## Using the Application
+        
+        1. Double-click the SEODataExtraction.exe file to run the application.
+        2. Use the "Upload CSV" button to select your input file.
+        3. Click "Process WordPress Sites" to start the data extraction.
+        4. Once processing is complete, use the "Export Results" button to save the results.
+
+        Note: Disable Windows Defender in case windows treats the application as Virus. 
+        
+        If you encounter any issues, please contact the me for assistance.
+        
+        Developer
+        ~Rohit kabdwal
+        -whatsapp - 8755759449
+        -upwork - https://www.upwork.com/freelancers/~01c664b9674c83c876
+        
+        "@ | Out-File -FilePath README.txt
+    - name: Upload executable and README
+      uses: actions/upload-artifact@v4
+      with:
+        name: SEODataExtraction-Windows
+        path: |
+          dist/SEODataExtraction.exe
+          README.txt
+        retention-days: 5
+    - name: Upload build logs and files
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: build-logs-and-files
+        path: |
+          *.spec
+          build/**/*
+          dist/**/*
+        retention-days: 5
