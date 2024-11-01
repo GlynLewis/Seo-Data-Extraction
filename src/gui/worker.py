@@ -1,6 +1,6 @@
 import sys
 from PyQt6.QtCore import QThread, pyqtSignal
-from src.dataforseo_api import DataForSEOClient
+from src.data_processor import DataForSEOClient  # Updated import
 import asyncio
 import json
 import os
@@ -96,14 +96,25 @@ class Worker(QThread):
                 if website.startswith(('http://', 'https://')):
                     website = website.split('://', 1)[1]
 
+                # Get website data
                 website_data = await client.get_website_data(website)
+                
+                # Add delay between API calls
+                await asyncio.sleep(1.5)
+                
+                # Get page data
                 page_data = await client.get_page_data(website)
+                
+                # Add delay between API calls
+                await asyncio.sleep(1.5)
+                
+                # Get backlink data
                 backlink_data = await client.get_backlink_data(website)
 
                 batch_results.append({
-                    'website': website,  # Store without protocol
+                    'website': website,
                     'linkedin_url': linkedin_url,
-                    'cms': website_data['cms'],  # Changed from is_wordpress to cms
+                    'cms': website_data['cms'],
                     'domain_rank': website_data['domain_rank'],
                     'total_pages': page_data['total_pages'],
                     'indexed_pages': page_data['indexed_pages'],
@@ -115,15 +126,15 @@ class Worker(QThread):
                 error_msg = f"Error processing {website}: {str(e)}"
                 self.error.emit(error_msg)
                 batch_results.append({
-                    'website': website,  # Store without protocol
+                    'website': website,
                     'linkedin_url': linkedin_url,
                     'error': str(e),
-                    'cms': 'Error',  # Changed from is_wordpress to cms
-                    'domain_rank': 'N/A',
-                    'total_pages': 'N/A',
-                    'indexed_pages': 'N/A',
-                    'backlinks': 'N/A',
-                    'backlink_domains': 'N/A'
+                    'cms': 'Error',
+                    'domain_rank': None,
+                    'total_pages': None,
+                    'indexed_pages': None,
+                    'backlinks': None,
+                    'backlink_domains': None
                 })
 
         return batch_results
