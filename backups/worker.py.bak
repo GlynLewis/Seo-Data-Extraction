@@ -18,48 +18,33 @@ class Worker(QThread):
         self.resume_file = resume_file
         self.start_index = 0
         self._is_running = True
-        self.loop = None
-
-    def run(self):
-        try:
-            # Create a new event loop for this thread
+        
+        # Set up a new event loop for Windows
+        if platform.system() == 'Windows':
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
 
-            # Run the async code and get results
-            results, processed_count = self.loop.run_until_complete(self.async_run())
-
-            # Emit results
+    def run(self):
+        try:
+            if platform.system() == 'Windows':
+                results, processed_count = self.loop.run_until_complete(self.async_run())
+            else:
+                results, processed_count = asyncio.run(self.async_run())
             self.finished.emit(results, processed_count)
-
         except Exception as e:
             self.error.emit(f"Error in Worker: {str(e)}")
         finally:
-            try:
-                # Cancel all running tasks
-                pending = asyncio.all_tasks(self.loop)
-                for task in pending:
-                    task.cancel()
-
-                # Run the event loop one last time to clean up
-                if pending:
-                    self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-
-                # Close the loop
+            if platform.system() == 'Windows':
                 self.loop.close()
-            except Exception as e:
-                self.error.emit(f"Error cleaning up: {str(e)}")
 
     def stop(self):
         self._is_running = False
-        if self.loop and self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.loop.stop)
 
     async def async_run(self):
         results = []
         processed_count = 0
         self.start_index = self.load_resume()
-
+        
         if self.start_index >= len(self.data):
             self.start_index = 0
 
@@ -68,11 +53,11 @@ class Worker(QThread):
                 for i in range(self.start_index, len(self.data), self.batch_size):
                     if not self._is_running:
                         break
-
+                        
                     batch = self.data[i:i+self.batch_size]
                     batch_results = await self.process_batch(client, batch)
                     results.extend(batch_results)
-
+                    
                     processed_count += len(batch_results)
                     self.save_resume(i + self.batch_size)
                     progress = min(100, int((i + self.batch_size) / len(self.data) * 100))
@@ -88,29 +73,46 @@ class Worker(QThread):
         for row in batch:
             if not self._is_running:
                 break
-
+                
             website = row['website_url']
             linkedin_url = row.get('linkedin_url', '')
             try:
-                # Remove any existing protocol as the API client will handle
+                # Remove any existing protocol as the API client will handle adding https://
                 if website.startswith(('http://', 'https://')):
                     website = website.split('://', 1)[1]
 
                 website_data = await client.get_website_data(website)
                 page_data = await client.get_page_data(website)
-                backlink_data = await client.get_backlink_data(website)
+                
+                is_wordpress = website_data['is_wordpress']
+                status = website_data['status']
+                
+                if is_wordpress is True:
+                    backlink_data = await client.get_backlink_data(website)
 
-                batch_results.append({
-                    'website': website,  # Store without protocol
-                    'linkedin_url': linkedin_url,
-                    'cms': website_data['cms'],  # Changed from is_wordpress to cms
-                    'domain_rank': website_data['domain_rank'],
-                    'total_pages': page_data['total_pages'],
-                    'indexed_pages': page_data['indexed_pages'],
-                    'backlinks': backlink_data['backlinks'],
-                    'backlink_domains': backlink_data['backlink_domains']
-                })
+                    api_phone_numbers = '|'.join(website_data['phone_numbers']) if isinstance(website_data['phone_numbers'], list) else ''
+                    api_emails = '|'.join(website_data['emails']) if isinstance(website_data['emails'], list) else ''
 
+                    batch_results.append({
+                        'website': website,  # Store without protocol
+                        'linkedin_url': linkedin_url,
+                        'is_wordpress': True,
+                        'domain_rank': website_data['domain_rank'],
+                        'api_phone_numbers': api_phone_numbers,
+                        'api_emails': api_emails,
+                        'total_pages': page_data['total_pages'],
+                        'indexed_pages': page_data['indexed_pages'],
+                        'external_links_count': backlink_data['external_links_count'],
+                        'referring_domains': backlink_data['referring_domains'],
+                        'status': status
+                    })
+                else:
+                    batch_results.append({
+                        'website': website,  # Store without protocol
+                        'linkedin_url': linkedin_url,
+                        'is_wordpress': False if is_wordpress is False else 'Unknown',
+                        'status': 'No WordPress Detected in API Response'
+                    })
             except Exception as e:
                 error_msg = f"Error processing {website}: {str(e)}"
                 self.error.emit(error_msg)
@@ -118,12 +120,8 @@ class Worker(QThread):
                     'website': website,  # Store without protocol
                     'linkedin_url': linkedin_url,
                     'error': str(e),
-                    'cms': 'Error',  # Changed from is_wordpress to cms
-                    'domain_rank': 'N/A',
-                    'total_pages': 'N/A',
-                    'indexed_pages': 'N/A',
-                    'backlinks': 'N/A',
-                    'backlink_domains': 'N/A'
+                    'is_wordpress': 'Error',
+                    'status': 'Error during processing'
                 })
 
         return batch_results

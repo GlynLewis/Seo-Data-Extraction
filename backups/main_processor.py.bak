@@ -1,0 +1,48 @@
+import pandas as pd
+from csv_handler import read_csv, write_csv
+from web_scraper import get_total_pages, get_google_indexed_pages
+from dataforseo_api import DataForSEOClient
+import asyncio
+import logging
+
+async def process_websites(input_file, output_file):
+    df = read_csv(input_file)
+    if df is None:
+        return
+
+    async with DataForSEOClient() as client:
+        for index, row in df.iterrows():
+            website = row['website_url']
+            
+            try:
+                website_data = await client.get_website_data(website)
+                backlink_data = await client.get_backlink_data(website)
+
+                df.at[index, 'is_wordpress'] = website_data['is_wordpress']
+                df.at[index, 'domain_rank'] = website_data['domain_rank']
+                
+                # Only process WordPress sites
+                if website_data['is_wordpress']:
+                    df.at[index, 'api_phone_numbers'] = '|'.join(website_data['phone_numbers']) if website_data['phone_numbers'] else ''
+                    df.at[index, 'api_emails'] = '|'.join(website_data['emails']) if website_data['emails'] else ''
+                    df.at[index, 'external_links_count'] = backlink_data['external_links_count']
+                    df.at[index, 'referring_domains'] = backlink_data['referring_domains']
+
+                    total_pages = get_total_pages(website)
+                    indexed_pages = get_google_indexed_pages(website)
+                    
+                    df.at[index, 'total_pages'] = total_pages
+                    df.at[index, 'indexed_pages'] = indexed_pages
+                    df.at[index, 'status'] = "WordPress site processed"
+                else:
+                    df.at[index, 'status'] = "Not a WordPress site"
+
+            except Exception as e:
+                df.at[index, 'status'] = f"Error: {str(e)}"
+
+    write_csv(df, output_file)
+
+if __name__ == "__main__":
+    input_file = "data/input/sample_data.csv"
+    output_file = "data/output/processed_data.csv"
+    asyncio.run(process_websites(input_file, output_file))

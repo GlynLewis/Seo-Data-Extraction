@@ -135,34 +135,37 @@ class DataForSEOClient:
             result = response[0]
             technologies = result.get('technologies', {})
             cms_items = []
-            
+
             # Extract CMS information from the correct path in the response
             if 'cms' in technologies:
                 cms_items = technologies['cms']
             elif 'content' in technologies and 'cms' in technologies['content']:
                 cms_items = technologies['content']['cms']
-            
-            is_wordpress = any('wordpress' in item.lower() for item in cms_items) if cms_items else False
-            
-            if is_wordpress:
-                status = 'WordPress CMS Detected in API Response'
+            logger.warning(f"CMS Result {cms_items}")
+
+            # Determine CMS value based on the three cases
+            if cms_items:
+                # Check if any CMS is WordPress (case-insensitive)
+                if any('wordpress' in item.lower() for item in cms_items):
+                    cms_value = 'Wordpress'  # WordPress detected
+                else:
+                    # Not WordPress, return the actual CMS name
+                    cms_value = cms_items[0]  # Use the first CMS found
             else:
-                status = 'No WordPress Detected in API Response'
-            
+                cms_value = 'Error'  # No CMS detected
+
             return {
-                'is_wordpress': is_wordpress,
+                'cms': cms_value,
                 'domain_rank': result.get('domain_rank'),
                 'phone_numbers': result.get('phone_numbers', []) or [],
-                'emails': result.get('emails', []) or [],
-                'status': status
+                'emails': result.get('emails', []) or []
             }
         logger.warning(f"No website data found for {url}")
         return {
-            'is_wordpress': None,
+            'cms': 'Error',
             'domain_rank': None,
             'phone_numbers': [],
-            'emails': [],
-            'status': 'No WordPress Detected in API Response'
+            'emails': []
         }
 
     async def get_backlink_data(self, url):
@@ -178,11 +181,11 @@ class DataForSEOClient:
         if response and response[0]:
             logger.info(f"Successfully retrieved backlink data for {url}")
             return {
-                'external_links_count': response[0].get('external_links_count', 0),
-                'referring_domains': response[0].get('referring_domains', 0)
+                'backlinks': response[0].get('external_links_count', 0),
+                'backlink_domains': response[0].get('referring_domains', 0)
             }
         logger.warning(f"No backlink data found for {url}")
-        return {'external_links_count': 0, 'referring_domains': 0}
+        return {'backlinks': 0, 'backlink_domains': 0}
 
     async def get_indexed_pages(self, url):
         domain = self._extract_domain(url)
@@ -193,7 +196,7 @@ class DataForSEOClient:
             'q': f'site:{domain}',
             'num': 1
         }
-        
+
         try:
             async with self.session.get(self.GOOGLE_CSE_URL, params=query_params) as response:
                 response.raise_for_status()
@@ -208,9 +211,9 @@ class DataForSEOClient:
     async def get_robots_txt(self, url):
         url = self._normalize_url(url)
         robots_url = urljoin(url, '/robots.txt')
-        
+
         logger.info(f"Fetching robots.txt from {robots_url}")
-        
+
         try:
             async with self.session.get(robots_url, timeout=TIMEOUT) as response:
                 if response.status == 200:
@@ -255,7 +258,7 @@ class DataForSEOClient:
             '/sitemap/',
             '/sitemap/sitemap.xml'
         ]
-        
+
         sitemaps = []
         for path in default_paths:
             sitemap_url = urljoin(url, path)
@@ -265,9 +268,9 @@ class DataForSEOClient:
                         logger.info(f"Found default sitemap at {sitemap_url}")
                         sitemaps.append(sitemap_url)
             except Exception as e:
-                logger.debug(f"Could not access {sitemap_url}: {str(e)}")
+                logger.error(f"Could not access {sitemap_url}: {str(e)}")
                 continue
-        
+
         return sitemaps
 
     async def parse_sitemap(self, url, depth=0):
@@ -281,9 +284,9 @@ class DataForSEOClient:
                 try:
                     content = await self._decode_content(response)
                     soup = BeautifulSoup(content, 'lxml-xml')
-                    
+
                     urls = []
-                    
+
                     sitemapindex = soup.find('sitemapindex')
                     if sitemapindex:
                         logger.info(f"Found sitemap index at {url}")
@@ -294,7 +297,7 @@ class DataForSEOClient:
                     else:
                         urls = [loc.text for loc in soup.find_all('loc')[:MAX_URLS_PER_SITEMAP]]
                         logger.info(f"Found {len(urls)} URLs in sitemap at {url}")
-                    
+
                     return urls
                 except Exception as e:
                     logger.error(f"Error processing sitemap content: {str(e)}")

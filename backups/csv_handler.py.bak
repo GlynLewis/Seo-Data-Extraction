@@ -84,7 +84,7 @@ def read_csv(file_path):
             logger.info("Sample of first record:")
             for key, value in records[0].items():
                 logger.info(f"  {key}: {value}")
-
+        
         return records
 
     except Exception as e:
@@ -94,7 +94,7 @@ def read_csv(file_path):
 def write_csv(data, output_path):
     try:
         logger.info(f"Attempting to write CSV to: {output_path}")
-
+        
         # Convert data to DataFrame if it's a list of dictionaries
         if isinstance(data, list):
             logger.info("Converting list of dictionaries to DataFrame")
@@ -104,17 +104,18 @@ def write_csv(data, output_path):
             df = data
 
         logger.info(f"DataFrame shape before filtering: {df.shape}")
-
+        
         # Clean website URLs before writing
         if 'website_url' in df.columns:
             logger.info("Cleaning website URLs before writing")
             df['website_url'] = df['website_url'].apply(clean_domain)
-
-        # Only include rows where cms is 'Wordpress'
-        if 'cms' in df.columns:
-            df = df[df['cms'] == 'Wordpress']
-            logger.info(f"DataFrame shape after filtering for WordPress: {df.shape}")
-
+        
+        # Filter only rows where is_wordpress is True (if the column exists)
+        if 'is_wordpress' in df.columns:
+            logger.info("Filtering WordPress sites")
+            df = df[df['is_wordpress'] == True]
+            logger.info(f"DataFrame shape after filtering: {df.shape}")
+        
         # Write filtered data to CSV
         df.to_csv(output_path, index=False, quoting=csv.QUOTE_ALL)
         logger.info(f"Successfully wrote {len(df)} rows to {output_path}")
