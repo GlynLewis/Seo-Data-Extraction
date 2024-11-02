@@ -1,9 +1,9 @@
 import aiohttp
 import asyncio
-from constants import (
+from src.constants import (
     DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD, GOOGLE_API_KEY, GOOGLE_CSE_ID,
     DEFAULT_TIMEOUT, MAX_SITEMAP_DEPTH, MAX_URLS_PER_SITEMAP, MAX_RETRIES,
-    RETRY_DELAY, TCP_CONNECTOR_LIMIT, FORCE_CLOSE_CONNECTIONS, ENABLE_CLEANUP_CLOSED
+    INITIAL_RETRY_DELAY, TCP_CONNECTOR_LIMIT, FORCE_CLOSE_CONNECTIONS, ENABLE_CLEANUP_CLOSED
 )
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
@@ -193,27 +193,27 @@ class DataForSEOClient:
                 async with self.session.post(endpoint, json=data, timeout=REQUEST_TIMEOUT) as response:
                     response.raise_for_status()
                     result = await response.json()
-                    
+
                     # Validate response structure
                     if not isinstance(result, dict):
                         logger.error(f"Invalid response format from API: {result}")
-                        return None
-                        
+                        return []
+
                     tasks = result.get('tasks', [])
                     if not tasks:
                         logger.error("No tasks found in API response")
-                        return None
-                        
+                        return []
+
                     # Safely access first task
                     first_task = tasks[0] if tasks else None
                     if not first_task:
                         logger.error("Empty task in API response")
-                        return None
+                        return []
                         
                     status_code = first_task.get('status_code')
                     if not status_code:
                         logger.error(f"No status code in task: {first_task}")
-                        return None
+                        return []
                         
                     if status_code == 20000:
                         result_data = first_task.get('result', [])
@@ -222,18 +222,18 @@ class DataForSEOClient:
                             return result_data
                         else:
                             logger.warning(f"Empty result data from API for {endpoint}")
-                            return None
+                            return []
                     else:
                         error_message = first_task.get('status_message', 'Unknown error')
                         logger.error(f"API request failed: {error_message}")
-                        return None
+                        return []
                         
             except aiohttp.ClientResponseError as e:
                 logger.error(f"API request failed with status {e.status}: {str(e)}")
-                raise
+                return []
             except Exception as e:
                 logger.error(f"Unexpected error during API request: {str(e)}")
-                raise
+                return []
             finally:
                 # Force garbage collection after request
                 gc.collect()
@@ -249,43 +249,83 @@ class DataForSEOClient:
             "target": domain,
             "limit": 1
         }]
-        
+
         try:
             response = await self._make_request(endpoint, data)
-            if response and isinstance(response, list) and len(response) > 0:
-                logger.info(f"Successfully retrieved website data for {url}")
-                result = response[0]
-                technologies = result.get('technologies', {})
-                cms_items = []
+            #logger.warning(f"Response for {response}")
 
-                if isinstance(technologies, dict):
-                    if 'cms' in technologies:
-                        cms_items = technologies['cms']
-                    elif 'content' in technologies and isinstance(technologies['content'], dict):
-                        cms = technologies['content'].get('cms', [])
-                        if isinstance(cms, list):
-                            cms_items = cms
+            # Handle empty or invalid response
+            if not response or not isinstance(response, list):
+                logger.warning(f"Invalid or empty response for {url}")
+                return {
+                    'cms': 'Error',
+                    'domain_rank': None,
+                    'phone_numbers': [],
+                    'emails': []
+                }
 
-                if cms_items and isinstance(cms_items, list):
-                    if any('wordpress' in str(item).lower() for item in cms_items):
-                        cms_value = 'Wordpress'
-                    else:
-                        cms_value = str(cms_items[0]) if cms_items else 'Error'
+            # Safely get the first result
+            result = response[0] if response else {}
+            if not result:
+                logger.warning(f"Empty result for {url}")
+                return {
+                    'cms': 'Error',
+                    'domain_rank': None,
+                    'phone_numbers': [],
+                    'emails': []
+                }
+
+            # Safely get technologies
+            technologies = result.get('technologies', {})
+            if not isinstance(technologies, dict):
+                technologies = {}
+
+            # First check for CMS
+            cms_items = []
+            if 'cms' in technologies:
+                cms_items = technologies['cms']
+                logger.info(f"Found CMS items: {cms_items}")
+            elif 'content' in technologies and isinstance(technologies['content'], dict):
+                cms = technologies['content'].get('cms', [])
+                if isinstance(cms, list):
+                    cms_items = cms
+                    logger.info(f"Found CMS items in content: {cms_items}")
+
+            # Determine CMS value
+            cms_value = 'Error'
+            if cms_items and isinstance(cms_items, list):
+                if any('wordpress' in str(item).lower() for item in cms_items):
+                    cms_value = 'Wordpress'
+                    logger.info(f"Detected WordPress for {url}")
                 else:
-                    # If no CMS detected, try scraping for WordPress
-                    logger.info(f"No CMS detected via API for {url}, attempting WordPress detection via scrape")
+                    cms_value = str(cms_items[0])
+                    logger.info(f"Using CMS value: {cms_value} for {url}")
+            else:
+                # If no CMS found, check for ecommerce platforms
+                sales = technologies.get('sales', {})
+                if isinstance(sales, dict) and 'ecommerce' in sales:
+                    ecommerce = sales['ecommerce']
+                    if isinstance(ecommerce, list) and ecommerce:
+                        cms_value = str(ecommerce[0])
+                        logger.error(f"Using ecommerce platform as CMS: {cms_value} for {url}")
+
+                # If still no CMS found, try WordPress scraping
+                if cms_value == 'Error':
+                    logger.info(f"No CMS or ecommerce platform detected via API for {url}, attempting WordPress detection via scrape")
                     is_wordpress = await self.check_wordpress_via_scrape(url)
                     cms_value = 'Wordpress_SC' if is_wordpress else 'Error'
+                    logger.info(f"WordPress scrape result for {url}: {cms_value}")
 
-                return {
-                    'cms': cms_value,
-                    'domain_rank': result.get('domain_rank'),
-                    'phone_numbers': result.get('phone_numbers', []) or [],
-                    'emails': result.get('emails', []) or []
-                }
+            return {
+                'cms': cms_value,
+                'domain_rank': result.get('domain_rank'),
+                'phone_numbers': result.get('phone_numbers', []) or [],
+                'emails': result.get('emails', []) or []
+            }
+
         except Exception as e:
             logger.error(f"Error processing website data for {url}: {str(e)}")
-            
+
             # Try scraping as a fallback
             logger.info(f"Attempting WordPress detection via scrape for {url} after API error")
             try:
@@ -337,16 +377,16 @@ class DataForSEOClient:
         max_tries=MAX_RETRIES
     )
     async def get_indexed_pages(self, url: str) -> int:
-        domain = self._extract_domain(url)
-        logger.info(f"Fetching indexed pages count for {domain}")
-        query_params = {
-            'key': self.google_api_key,
-            'cx': self.google_cse_id,
-            'q': f'site:{domain}',
-            'num': 1
-        }
-
         try:
+            domain = self._extract_domain(url)
+            logger.info(f"Fetching indexed pages count for {domain}")
+            query_params = {
+                'key': self.google_api_key,
+                'cx': self.google_cse_id,
+                'q': f'site:{domain}',
+                'num': 1
+            }
+
             async with self.session.get(self.GOOGLE_CSE_URL, params=query_params) as response:
                 response.raise_for_status()
                 result = await response.json()
@@ -487,47 +527,76 @@ class DataForSEOClient:
     async def get_total_pages(self, url: str) -> Tuple[int, str]:
         url = self._normalize_url(url)
         logger.info(f"Getting total pages count for {url}")
-        robots_txt, status = await self.get_robots_txt(url)
         
-        sitemaps = self.get_sitemaps(robots_txt) if robots_txt is not None else []
-        
-        if not sitemaps:
-            logger.info("No sitemaps found in robots.txt, trying default locations...")
-            sitemaps = await self.try_default_sitemaps(url)
-        
-        if not sitemaps:
-            logger.warning(f"No sitemaps found for {url}")
-            return 0, "No sitemaps found in robots.txt or default locations"
-        
-        logger.info(f"Found {len(sitemaps)} sitemaps for {url}")
-        tasks = [self.parse_sitemap(sitemap) for sitemap in sitemaps]
-        url_lists = await asyncio.gather(*tasks, return_exceptions=True)
-        total_urls = set()
-        
-        for result in url_lists:
-            if isinstance(result, list):
-                total_urls.update(result)
-        
-        if not total_urls:
-            logger.warning(f"No URLs found in sitemaps for {url}")
-            return 0, "No URLs found in sitemaps"
-        
-        logger.info(f"Found total of {len(total_urls)} unique URLs for {url}")
-        return len(total_urls), "Total pages counted from sitemaps"
+        try:
+            robots_txt, status = await self.get_robots_txt(url)
+            
+            sitemaps = self.get_sitemaps(robots_txt) if robots_txt is not None else []
+            
+            if not sitemaps:
+                logger.info("No sitemaps found in robots.txt, trying default locations...")
+                sitemaps = await self.try_default_sitemaps(url)
+            
+            if not sitemaps:
+                logger.warning(f"No sitemaps found for {url}")
+                return 0, "No sitemaps found in robots.txt or default locations"
+            
+            logger.info(f"Found {len(sitemaps)} sitemaps for {url}")
+            tasks = [self.parse_sitemap(sitemap) for sitemap in sitemaps]
+            url_lists = await asyncio.gather(*tasks, return_exceptions=True)
+            total_urls = set()
+            
+            for result in url_lists:
+                if isinstance(result, list):
+                    total_urls.update(result)
+            
+            if not total_urls:
+                logger.warning(f"No URLs found in sitemaps for {url}")
+                return 0, "No URLs found in sitemaps"
+            
+            logger.info(f"Found total of {len(total_urls)} unique URLs for {url}")
+            return len(total_urls), "Total pages counted from sitemaps"
+        except Exception as e:
+            logger.error(f"Error in get_total_pages for {url}: {str(e)}")
+            return 0, f"Error getting total pages: {str(e)}"
 
     async def get_page_data(self, url: str) -> Dict[str, Any]:
         url = self._normalize_url(url)
         logger.info(f"Getting page data for {url}")
-        
-        # Run both operations concurrently
-        total_pages_task = self.get_total_pages(url)
-        indexed_pages_task = self.get_indexed_pages(url)
-        
-        total_pages, total_pages_status = await total_pages_task
-        indexed_pages = await indexed_pages_task
-        
-        return {
-            'total_pages': total_pages,
-            'indexed_pages': indexed_pages,
-            'status': total_pages_status
-        }
+
+        try:
+            # Create tasks for concurrent execution
+            total_pages_task = asyncio.create_task(self.get_total_pages(url))
+            indexed_pages_task = asyncio.create_task(self.get_indexed_pages(url))
+            
+            # Wait for both tasks to complete
+            total_pages_result, indexed_pages = await asyncio.gather(
+                total_pages_task,
+                indexed_pages_task,
+                return_exceptions=True
+            )
+            
+            # Handle total_pages_result
+            if isinstance(total_pages_result, Exception):
+                logger.error(f"Error getting total pages: {str(total_pages_result)}")
+                total_pages, status = 0, f"Error: {str(total_pages_result)}"
+            else:
+                total_pages, status = total_pages_result
+            
+            # Handle indexed_pages
+            if isinstance(indexed_pages, Exception):
+                logger.error(f"Error getting indexed pages: {str(indexed_pages)}")
+                indexed_pages = 0
+            
+            return {
+                'total_pages': total_pages,
+                'indexed_pages': indexed_pages,
+                'status': status
+            }
+        except Exception as e:
+            logger.error(f"Error getting page data for {url}: {str(e)}")
+            return {
+                'total_pages': 0,
+                'indexed_pages': 0,
+                'status': f"Error: {str(e)}"
+            }

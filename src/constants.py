@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 
 # Try to load the .env file, but don't raise an error if it's not found

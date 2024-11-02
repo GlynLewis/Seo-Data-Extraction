@@ -1,6 +1,7 @@
 import pandas as pd
 import csv
 import logging
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -93,7 +94,7 @@ def read_csv(file_path):
 
 def write_csv(data, output_path):
     try:
-        logger.info(f"Attempting to write CSV to: {output_path}")
+        logger.error(f"Attempting to write CSV files based on: {output_path}")
 
         # Convert data to DataFrame if it's a list of dictionaries
         if isinstance(data, list):
@@ -103,21 +104,43 @@ def write_csv(data, output_path):
             logger.info("Using provided DataFrame")
             df = data
 
-        logger.info(f"DataFrame shape before filtering: {df.shape}")
+        logger.info(f"Total records before splitting: {df.shape[0]}")
 
         # Clean website URLs before writing
         if 'website_url' in df.columns:
             logger.info("Cleaning website URLs before writing")
             df['website_url'] = df['website_url'].apply(clean_domain)
 
-        # Only include rows where cms is 'Wordpress'
-        if 'cms' in df.columns:
-            df = df[df['cms'] == 'Wordpress']
-            logger.info(f"DataFrame shape after filtering for WordPress: {df.shape}")
+        # Get base path and extension
+        base_path, ext = os.path.splitext(output_path)
+        if not ext:
+            ext = '.csv'
 
-        # Write filtered data to CSV
-        df.to_csv(output_path, index=False, quoting=csv.QUOTE_ALL)
-        logger.info(f"Successfully wrote {len(df)} rows to {output_path}")
+        # Group data by CMS type
+        if 'cms' in df.columns:
+            # Get unique CMS types
+            cms_types = df['cms'].unique()
+            
+            # Create a file for each CMS type
+            for cms_type in cms_types:
+                # Create safe filename
+                safe_cms = cms_type.lower().replace(' ', '_')
+                if cms_type == 'Error':
+                    output_file = f"{base_path}_out_errors{ext}"
+                else:
+                    output_file = f"{base_path}_out_{safe_cms}{ext}"
+                
+                # Filter data for this CMS type
+                cms_df = df[df['cms'] == cms_type]
+                
+                # Write to file
+                cms_df.to_csv(output_file, index=False, quoting=csv.QUOTE_ALL)
+                logger.error(f"Wrote {len(cms_df)} rows to {output_file} for CMS type: {cms_type}")
+        else:
+            logger.error("No 'cms' column found in data, writing all records to single file")
+            df.to_csv(output_path, index=False, quoting=csv.QUOTE_ALL)
+            logger.error(f"Wrote {len(df)} rows to {output_path}")
+
         return True
     except Exception as e:
         logger.error(f"Error writing CSV: {str(e)}", exc_info=True)

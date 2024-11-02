@@ -1,10 +1,14 @@
 import sys
+import logging
 from PyQt6.QtCore import QThread, pyqtSignal
-from src.data_processor import DataForSEOClient  # Updated import
+from src.data_processor import DataForSEOClient
 import asyncio
 import json
 import os
 import platform
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class Worker(QThread):
     finished = pyqtSignal(list, int)
@@ -102,39 +106,65 @@ class Worker(QThread):
                 # Add delay between API calls
                 await asyncio.sleep(1.5)
                 
-                # Get page data
-                page_data = await client.get_page_data(website)
+                # Get page data (includes both total_pages and indexed_pages)
+                try:
+                    page_data = await client.get_page_data(website)
+                except Exception as e:
+                    logger.error(f"Error getting page data for {website}: {str(e)}")
+                    page_data = {
+                        'total_pages': 0,
+                        'indexed_pages': 0,
+                        'status': f"Error: {str(e)}"
+                    }
                 
                 # Add delay between API calls
                 await asyncio.sleep(1.5)
                 
                 # Get backlink data
-                backlink_data = await client.get_backlink_data(website)
+                try:
+                    backlink_data = await client.get_backlink_data(website)
+                except Exception as e:
+                    logger.error(f"Error getting backlink data for {website}: {str(e)}")
+                    backlink_data = {
+                        'backlinks': 0,
+                        'backlink_domains': 0
+                    }
 
-                batch_results.append({
+                # Extract all needed values with defaults
+                cms = website_data.get('cms', 'Error')
+                domain_rank = website_data.get('domain_rank')
+                total_pages = page_data.get('total_pages', 0)
+                indexed_pages = page_data.get('indexed_pages', 0)
+                backlinks = backlink_data.get('backlinks', 0)
+                backlink_domains = backlink_data.get('backlink_domains', 0)
+
+                # Create result dictionary with extracted values
+                result = {
                     'website': website,
                     'linkedin_url': linkedin_url,
-                    'cms': website_data['cms'],
-                    'domain_rank': website_data['domain_rank'],
-                    'total_pages': page_data['total_pages'],
-                    'indexed_pages': page_data['indexed_pages'],
-                    'backlinks': backlink_data['backlinks'],
-                    'backlink_domains': backlink_data['backlink_domains']
-                })
+                    'cms': cms,
+                    'domain_rank': domain_rank,
+                    'total_pages': total_pages,
+                    'indexed_pages': indexed_pages,
+                    'backlinks': backlinks,
+                    'backlink_domains': backlink_domains
+                }
+                
+                batch_results.append(result)
 
             except Exception as e:
                 error_msg = f"Error processing {website}: {str(e)}"
                 self.error.emit(error_msg)
+                # Add error result to maintain order
                 batch_results.append({
                     'website': website,
                     'linkedin_url': linkedin_url,
-                    'error': str(e),
                     'cms': 'Error',
                     'domain_rank': None,
-                    'total_pages': None,
-                    'indexed_pages': None,
-                    'backlinks': None,
-                    'backlink_domains': None
+                    'total_pages': 0,
+                    'indexed_pages': 0,
+                    'backlinks': 0,
+                    'backlink_domains': 0
                 })
 
         return batch_results

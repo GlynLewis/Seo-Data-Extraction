@@ -5,7 +5,7 @@ import os
 from functools import wraps
 from typing import Callable, TypeVar, Any
 from aiohttp import ClientError, ClientResponseError
-from src.config import (
+from src.constants import (
     MAX_RETRIES,
     INITIAL_RETRY_DELAY,
     MAX_RETRY_DELAY,

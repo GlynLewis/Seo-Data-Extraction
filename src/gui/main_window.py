@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt6.QtCore import Qt
 from src.csv_handler import read_csv, write_csv
 from src.gui.worker import Worker
-from src.config import LAST_INPUT_DIRECTORY, update_last_input_directory
+from src.constants import LAST_INPUT_DIRECTORY, update_last_input_directory
 from src.utils import set_log_file
 
 # Set up logging
