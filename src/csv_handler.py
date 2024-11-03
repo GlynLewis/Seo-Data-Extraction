@@ -89,7 +89,7 @@ def read_csv(file_path):
         return records
 
     except Exception as e:
-        logger.error(f"Error reading CSV: {str(e)}", exc_info=True)
+        logger.error(f"Error reading CSV: {str(e)}")
         return None
 
 def write_csv(data, output_path):
@@ -117,10 +117,10 @@ def write_csv(data, output_path):
             ext = '.csv'
 
         # Group data by CMS type
-        if 'cms' in df.columns:
+        if 'cms' in df.columns.str.lower():
             # Get unique CMS types
             cms_types = df['cms'].unique()
-            
+
             # Create a file for each CMS type
             for cms_type in cms_types:
                 # Create safe filename
@@ -143,5 +143,5 @@ def write_csv(data, output_path):
 
         return True
     except Exception as e:
-        logger.error(f"Error writing CSV: {str(e)}", exc_info=True)
+        logger.error(f"Error writing CSV: {str(e)}")
         return False

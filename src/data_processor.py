@@ -38,16 +38,27 @@ BROWSER_HEADERS = {
 }
 
 # WordPress detection patterns
+# Improved WordPress patterns for specific files
 WP_PATTERNS = [
-    r'/wp-content/',
-    r'/wp-includes/',
-    r'wp-[a-zA-Z0-9-]+\.(?:js|css)',
-    r'themes/[a-zA-Z0-9-]+/',
-    r'plugins/[a-zA-Z0-9-]+/',
-    r'wp-json/',
-    r'xmlrpc.php',
-    r'wp-login.php'
+    r'/wp-content/themes/.+?/',  # Specific WordPress theme paths
+    r'/wp-includes/js/wp-emoji-release.min.js',  # Unique WordPress script
+    r'wp-json',  # WordPress JSON API
+    r'wp-admin',  # Admin path
+    r'wp-login.php',  # WordPress login page
 ]
+
+# Negative patterns to identify non-WordPress CMSs (like Drupal or Wix)
+NON_WP_PATTERNS = [
+    r'/sites/default/',  # Drupal
+    r'drupal\.js',       # Drupal
+    r'/modules/',        # Drupal
+    r'wixstatic\.com',   # Wix
+    r'apps\.wix\.com',   # Wix apps
+]
+
+# Custom exception for SSL errors
+class SSLError(Exception):
+    pass
 
 class DataForSEOClient:
     BASE_URL = "https://api.dataforseo.com/v3"
@@ -72,6 +83,7 @@ class DataForSEOClient:
         self._request_semaphore = asyncio.Semaphore(TCP_CONNECTOR_LIMIT)
         self._session_lock = asyncio.Lock()
         self._current_domain = None  # Track current domain being processed
+        self._processed_backlinks = set()  # Track domains we've already fetched backlinks for
 
     async def __aenter__(self):
         logger.info("Initializing DataForSEO client session")
@@ -150,31 +162,56 @@ class DataForSEOClient:
         try:
             async with self.session.get(url, timeout=REQUEST_TIMEOUT) as response:
                 if response.status != 200:
+                    logger.info(f"{url} returned non-200 status: {response.status}")
                     return False
-                
+
                 content = await self._decode_content(response)
                 soup = BeautifulSoup(content, 'html.parser')
-                
-                # Check meta generator tag
+
+                # Check meta generator tag for WordPress and log details
                 meta_generator = soup.find('meta', {'name': 'generator'})
-                if meta_generator and 'wordpress' in meta_generator.get('content', '').lower():
-                    return True
-                
-                # Check for WordPress patterns in HTML
+                if meta_generator and meta_generator.get('content'):
+                    meta_content = meta_generator.get('content', '').lower()
+                    logger.info(f"{url} meta generator tag content: {meta_content}")
+                    if 'wordpress' in meta_content:
+                        logger.info(f"{url} identified as WordPress by meta generator tag: {meta_content}")
+                        return True
+                    else:
+                        logger.info(f"{url} meta generator tag found but not WordPress: {meta_content}")
+                else:
+                    logger.info(f"{url} has no meta generator tag")
+
+                # Convert HTML to a string for regex matching
                 html_str = str(soup)
+
+                # Check for WordPress-specific patterns in HTML content
                 for pattern in WP_PATTERNS:
                     if re.search(pattern, html_str, re.IGNORECASE):
-                        return True
-                
-                # Check for wp-json API endpoint
-                try:
-                    wp_json_url = urljoin(url, '/wp-json/')
-                    async with self.session.get(wp_json_url, timeout=REQUEST_TIMEOUT) as wp_response:
-                        return wp_response.status == 200
-                except:
-                    pass
-                
+                        logger.info(f"{url} matched WordPress pattern: {pattern}")
+
+                        # Try accessing wp-json endpoint to confirm WordPress
+                        try:
+                            wp_json_url = urljoin(url, '/wp-json/')
+                            async with self.session.get(wp_json_url, timeout=REQUEST_TIMEOUT) as wp_response:
+                                if wp_response.status == 200:
+                                    logger.info(f"{url} confirmed as WordPress by wp-json endpoint.")
+                                    return True
+                                else:
+                                    logger.info(f"{url} wp-json endpoint returned non-200 status: {wp_response.status}")
+                        except Exception as e:
+                            logger.error(f"Error accessing wp-json for {url}: {str(e)}")
+                        return True  # WordPress pattern match without needing wp-json confirmation
+
+                # If any non-WordPress patterns are found, return False immediately
+                for pattern in NON_WP_PATTERNS:
+                    if re.search(pattern, html_str, re.IGNORECASE):
+                        logger.info(f"{url} matched non-WordPress pattern: {pattern}")
+                        return False
+
+                # If no positive WordPress patterns are conclusively detected
+                logger.info(f"No conclusive WordPress patterns found for {url}")
                 return False
+
         except Exception as e:
             logger.error(f"Error checking WordPress via scrape for {url}: {str(e)}")
             return False
@@ -185,7 +222,7 @@ class DataForSEOClient:
         max_tries=MAX_RETRIES,
         max_time=90  # Increased from 60
     )
-    async def _make_request(self, endpoint: str, data: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    async def _make_request(self, endpoint: str, data: List[Dict[str, Any]], retry_with_www: bool = False) -> Optional[List[Dict[str, Any]]]:
         """Make API request with retry logic and rate limiting."""
         async with self._request_semaphore:
             logger.info(f"Making API request to {endpoint}")
@@ -226,13 +263,21 @@ class DataForSEOClient:
                     else:
                         error_message = first_task.get('status_message', 'Unknown error')
                         logger.error(f"API request failed: {error_message}")
+                        
+                        # If SSL error and not already retrying with www, suggest retry
+                        if not retry_with_www and 'SSL' in error_message:
+                            raise SSLError("SSL verification failed")
                         return []
                         
             except aiohttp.ClientResponseError as e:
                 logger.error(f"API request failed with status {e.status}: {str(e)}")
+                if not retry_with_www and 'SSL' in str(e):
+                    raise SSLError("SSL verification failed")
                 return []
             except Exception as e:
                 logger.error(f"Unexpected error during API request: {str(e)}")
+                if not retry_with_www and 'SSL' in str(e):
+                    raise SSLError("SSL verification failed")
                 return []
             finally:
                 # Force garbage collection after request
@@ -241,115 +286,93 @@ class DataForSEOClient:
     async def get_website_data(self, url: str) -> Dict[str, Any]:
         url = self._normalize_url(url)
         domain = self._extract_domain(url)
-        self._current_domain = domain  # Store current domain
-        logger.info(f"Fetching website data for {url}")
-        endpoint = f"{self.BASE_URL}/domain_analytics/technologies/domain_technologies/live"
-        
-        data = [{
-            "target": domain,
-            "limit": 1
-        }]
+        self._current_domain = domain
 
-        try:
-            response = await self._make_request(endpoint, data)
-            #logger.warning(f"Response for {response}")
+        logger.error("\n" + "-"*80 + "\n")  # Separator line
+        logger.error(f"Fetching website data for {url}")
 
-            # Handle empty or invalid response
-            if not response or not isinstance(response, list):
-                logger.warning(f"Invalid or empty response for {url}")
-                return {
-                    'cms': 'Error',
-                    'domain_rank': None,
-                    'phone_numbers': [],
-                    'emails': []
-                }
-
-            # Safely get the first result
-            result = response[0] if response else {}
-            if not result:
-                logger.warning(f"Empty result for {url}")
-                return {
-                    'cms': 'Error',
-                    'domain_rank': None,
-                    'phone_numbers': [],
-                    'emails': []
-                }
-
-            # Safely get technologies
-            technologies = result.get('technologies', {})
-            if not isinstance(technologies, dict):
-                technologies = {}
-
-            # First check for CMS
-            cms_items = []
-            if 'cms' in technologies:
-                cms_items = technologies['cms']
-                logger.info(f"Found CMS items: {cms_items}")
-            elif 'content' in technologies and isinstance(technologies['content'], dict):
-                cms = technologies['content'].get('cms', [])
-                if isinstance(cms, list):
-                    cms_items = cms
-                    logger.info(f"Found CMS items in content: {cms_items}")
-
-            # Determine CMS value
-            cms_value = 'Error'
-            if cms_items and isinstance(cms_items, list):
-                if any('wordpress' in str(item).lower() for item in cms_items):
-                    cms_value = 'Wordpress'
-                    logger.info(f"Detected WordPress for {url}")
-                else:
-                    cms_value = str(cms_items[0])
-                    logger.info(f"Using CMS value: {cms_value} for {url}")
-            else:
-                # If no CMS found, check for ecommerce platforms
-                sales = technologies.get('sales', {})
-                if isinstance(sales, dict) and 'ecommerce' in sales:
-                    ecommerce = sales['ecommerce']
-                    if isinstance(ecommerce, list) and ecommerce:
-                        cms_value = str(ecommerce[0])
-                        logger.error(f"Using ecommerce platform as CMS: {cms_value} for {url}")
-
-                # If still no CMS found, try WordPress scraping
-                if cms_value == 'Error':
-                    logger.info(f"No CMS or ecommerce platform detected via API for {url}, attempting WordPress detection via scrape")
-                    is_wordpress = await self.check_wordpress_via_scrape(url)
-                    cms_value = 'Wordpress_SC' if is_wordpress else 'Error'
-                    logger.info(f"WordPress scrape result for {url}: {cms_value}")
-
-            return {
-                'cms': cms_value,
-                'domain_rank': result.get('domain_rank'),
-                'phone_numbers': result.get('phone_numbers', []) or [],
-                'emails': result.get('emails', []) or []
-            }
-
-        except Exception as e:
-            logger.error(f"Error processing website data for {url}: {str(e)}")
-
-            # Try scraping as a fallback
-            logger.info(f"Attempting WordPress detection via scrape for {url} after API error")
-            try:
-                is_wordpress = await self.check_wordpress_via_scrape(url)
-                return {
-                    'cms': 'Wordpress_SC' if is_wordpress else 'Error',
-                    'domain_rank': None,
-                    'phone_numbers': [],
-                    'emails': []
-                }
-            except Exception as scrape_error:
-                logger.error(f"Error during scrape fallback for {url}: {str(scrape_error)}")
-            
-        logger.warning(f"No website data found for {url}")
-        return {
+        # Initialize result dictionary with default values
+        result = {
             'cms': 'Error',
             'domain_rank': None,
             'phone_numbers': [],
-            'emails': []
+            'backlinks': 0,
+            'backlink_domains': 0,
+            'indexed_pages': 0,
+            'total_pages': 0
         }
+
+        # First try WordPress detection via scraping
+        try:
+            is_wordpress = await self.check_wordpress_via_scrape(url)
+            if not is_wordpress and not url.startswith('https://www.'):
+                # Try scraping with www prefix
+                www_url = f"https://www.{domain}"
+                is_wordpress = await self.check_wordpress_via_scrape(www_url)
+
+            # result dictionary set cms
+            result['cms'] = 'WordPress' if is_wordpress else 'Error'
+
+            # Only get API data for WordPress sites
+            if is_wordpress:
+                logger.info(f"WordPress detected via scraping for {url}")
+
+                # get domain Rank via DataForSeo API
+                try:
+                    # Get domain rank via DataForSEO API
+                    tech_response = await self._make_request(
+                        f"{self.BASE_URL}/domain_analytics/technologies/domain_technologies/live",
+                        [{"target": domain, "limit": 1}]
+                    )
+
+                    # Log the tech_response
+                    # logger.error(f"Tech Response for {url}: {tech_response}")
+
+                    # Validate tech_response
+                    if (tech_response and isinstance(tech_response, list) and
+                        len(tech_response) > 0 and tech_response[0] and
+                        isinstance(tech_response[0], dict)):
+                        result['domain_rank'] = tech_response[0].get('domain_rank')
+                    else:
+                        logger.error(f"No technology data found for {url}. API response: {tech_response}")
+
+                except Exception as e:
+                    logger.error(f"Error processing domain rank for {url}: {str(e)}")
+
+                # Get page data
+                try:
+                    page_data = await self.get_page_data(url)
+                    result['indexed_pages'] = page_data.get('indexed_pages', 0)
+                    result['total_pages'] = page_data.get('total_pages', 0)
+
+                except Exception as e:
+                    logger.error(f"Error processing page data for {url}: {str(e)}")
+
+                # Get backlink data if not already processed
+                try:
+                    if domain not in self._processed_backlinks:
+                        backlink_data = await self.get_backlink_data(url)
+                        result['backlinks'] = backlink_data.get('backlinks', 0)
+                        result['backlink_domains'] = backlink_data.get('backlink_domains', 0)
+                        self._processed_backlinks.add(domain)
+
+                except Exception as e:
+                    logger.error(f"Error processing backlink data for {url}: {str(e)}")
+
+        except Exception as e:
+            logger.error(f"Error during WordPress scraping for {url}: {str(e)}")
+
+        return result
 
     async def get_backlink_data(self, url: str) -> Dict[str, int]:
         url = self._normalize_url(url)
         domain = self._extract_domain(url)
+        
+        # Check if we've already processed this domain
+        if domain in self._processed_backlinks:
+            logger.info(f"Skipping backlink data fetch for {url} - already processed")
+            return {'backlinks': 0, 'backlink_domains': 0}
+            
         logger.info(f"Fetching backlink data for {url}")
         endpoint = f"{self.BASE_URL}/backlinks/summary/live"
         data = [{
@@ -361,6 +384,7 @@ class DataForSEOClient:
             if response and isinstance(response, list) and len(response) > 0:
                 logger.info(f"Successfully retrieved backlink data for {url}")
                 result = response[0]
+                self._processed_backlinks.add(domain)
                 return {
                     'backlinks': result.get('external_links_count', 0),
                     'backlink_domains': result.get('referring_domains', 0)
@@ -474,13 +498,13 @@ class DataForSEOClient:
             async with self.session.get(url, timeout=REQUEST_TIMEOUT) as response:
                 is_valid = response.status == 200
                 if not is_valid and self._current_domain:
-                    logger.error(f"Invalid sitemap {url} for domain {self._current_domain}")
+                    logger.warning(f"Invalid sitemap {url} for domain {self._current_domain}")
                 return is_valid
         except Exception as e:
             if self._current_domain:
-                logger.error(f"Error checking sitemap {url} for domain {self._current_domain}: {str(e)}")
+                logger.warning(f"Error checking sitemap {url} for domain {self._current_domain}: {str(e)}")
             else:
-                logger.error(f"Error checking sitemap {url}: {str(e)}")
+                logger.warning(f"Error checking sitemap {url}: {str(e)}")
             return False
 
     async def parse_sitemap(self, url: str, depth: int = 0) -> List[str]:
@@ -513,15 +537,15 @@ class DataForSEOClient:
                     return urls
                 except Exception as e:
                     if self._current_domain:
-                        logger.error(f"Error processing sitemap {url} for domain {self._current_domain}: {str(e)}")
+                        logger.warning(f"Error processing sitemap {url} for domain {self._current_domain}: {str(e)}")
                     else:
-                        logger.error(f"Error processing sitemap {url}: {str(e)}")
+                        logger.warning(f"Error processing sitemap {url}: {str(e)}")
                     return []
         except Exception as e:
             if self._current_domain:
-                logger.error(f"Error fetching sitemap {url} for domain {self._current_domain}: {str(e)}")
+                logger.warning(f"Error fetching sitemap {url} for domain {self._current_domain}: {str(e)}")
             else:
-                logger.error(f"Error fetching sitemap {url}: {str(e)}")
+                logger.warning(f"Error fetching sitemap {url}: {str(e)}")
             return []
 
     async def get_total_pages(self, url: str) -> Tuple[int, str]:
@@ -538,7 +562,7 @@ class DataForSEOClient:
                 sitemaps = await self.try_default_sitemaps(url)
             
             if not sitemaps:
-                logger.warning(f"No sitemaps found for {url}")
+                logger.error(f"No sitemaps found for {url}")
                 return 0, "No sitemaps found in robots.txt or default locations"
             
             logger.info(f"Found {len(sitemaps)} sitemaps for {url}")
@@ -600,3 +624,7 @@ class DataForSEOClient:
                 'indexed_pages': 0,
                 'status': f"Error: {str(e)}"
             }
+
+# Custom exception for SSL errors
+class SSLError(Exception):
+    pass

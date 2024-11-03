@@ -105,38 +105,14 @@ class Worker(QThread):
                 
                 # Add delay between API calls
                 await asyncio.sleep(1.5)
-                
-                # Get page data (includes both total_pages and indexed_pages)
-                try:
-                    page_data = await client.get_page_data(website)
-                except Exception as e:
-                    logger.error(f"Error getting page data for {website}: {str(e)}")
-                    page_data = {
-                        'total_pages': 0,
-                        'indexed_pages': 0,
-                        'status': f"Error: {str(e)}"
-                    }
-                
-                # Add delay between API calls
-                await asyncio.sleep(1.5)
-                
-                # Get backlink data
-                try:
-                    backlink_data = await client.get_backlink_data(website)
-                except Exception as e:
-                    logger.error(f"Error getting backlink data for {website}: {str(e)}")
-                    backlink_data = {
-                        'backlinks': 0,
-                        'backlink_domains': 0
-                    }
 
                 # Extract all needed values with defaults
                 cms = website_data.get('cms', 'Error')
                 domain_rank = website_data.get('domain_rank')
-                total_pages = page_data.get('total_pages', 0)
-                indexed_pages = page_data.get('indexed_pages', 0)
-                backlinks = backlink_data.get('backlinks', 0)
-                backlink_domains = backlink_data.get('backlink_domains', 0)
+                total_pages = website_data.get('total_pages', 0)
+                indexed_pages = website_data.get('indexed_pages', 0)
+                backlinks = website_data.get('backlinks', 0)
+                backlink_domains = website_data.get('backlink_domains', 0)
 
                 # Create result dictionary with extracted values
                 result = {
@@ -149,22 +125,23 @@ class Worker(QThread):
                     'backlinks': backlinks,
                     'backlink_domains': backlink_domains
                 }
-                
+
                 batch_results.append(result)
 
             except Exception as e:
+                logger.error()
                 error_msg = f"Error processing {website}: {str(e)}"
                 self.error.emit(error_msg)
                 # Add error result to maintain order
                 batch_results.append({
                     'website': website,
                     'linkedin_url': linkedin_url,
-                    'cms': 'Error',
-                    'domain_rank': None,
-                    'total_pages': 0,
-                    'indexed_pages': 0,
-                    'backlinks': 0,
-                    'backlink_domains': 0
+                    'cms': cms,
+                    'domain_rank': domain_rank,
+                    'total_pages': total_pages,
+                    'indexed_pages': indexed_pages,
+                    'backlinks': backlinks,
+                    'backlink_domains': backlink_domains
                 })
 
         return batch_results

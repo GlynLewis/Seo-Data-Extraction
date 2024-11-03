@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             error_message = f"Error during CSV upload: {str(e)}"
-            logger.error(error_message, exc_info=True)
+            logger.error(error_message)
             QMessageBox.critical(self, "Error", error_message)
 
     def update_table_with_input_data(self):
@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
                     self.results_table.setItem(i, j, QTableWidgetItem(''))
             logger.info(f"Updated table with {len(self.data)} rows")
         except Exception as e:
-            logger.error(f"Error updating table: {str(e)}", exc_info=True)
+            logger.error(f"Error updating table: {str(e)}")
 
     def process_urls(self):
         if not self.data:
@@ -259,7 +259,7 @@ class MainWindow(QMainWindow):
                 self.results_table.scrollToItem(self.results_table.item(len(results) - 1, 0))
                 logger.info(f"Updated table with {len(results)} processed results")
         except Exception as e:
-            logger.error(f"Error updating table with processed data: {str(e)}", exc_info=True)
+            logger.error(f"Error updating table with processed data: {str(e)}")
 
     def export_results(self):
         try:
@@ -293,7 +293,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Export Failed", message)
         except Exception as e:
             error_message = f"Error during export: {str(e)}"
-            logger.error(error_message, exc_info=True)
+            logger.error(error_message)
             QMessageBox.critical(self, "Error", error_message)
 
 if __name__ == "__main__":

@@ -1,3 +1,9 @@
 {
-    "last_input_directory": "C:\\Users\\Glyn\\OneDrive - SuperLewis Solutions\\Company Files\\Superlewis\\Marketing\\_ColdEmail\\Apollo Leads\\Million Verified"
+    "last_input_directory": "C:\\Users\\Glyn\\OneDrive - SuperLewis Solutions\\Company Files\\Superlewis\\Marketing\\_ColdEmail\\Apollo Leads\\Million Verified",
+    "api_credentials": {
+        "dataforseo_login": "admin@superlewis.com",
+        "dataforseo_password": "ab0d272e760b2521",
+        "google_api_key": "AIzaSyCRVOxLnLyPhUHTC7Kptdfqoc-XkmBim7Q",
+        "google_cse_id": "169645a78955f41cb"
+    }
 }
