@@ -116,6 +116,8 @@ class MainWindow(QMainWindow):
 
             if file_name:
                 self.input_csv_path = file_name  # Store the input CSV path
+                # Update window title with filename
+                self.setWindowTitle(f"WordPress SEO Data Extraction    -    {os.path.basename(file_name)}")
                 logger.info(f"Selected file: {file_name}")
 
                 # Set up logging to file
