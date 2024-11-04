@@ -35,6 +35,7 @@ PyInstaller.__main__.run([
     '--hidden-import=src.gui.utils',
     '--collect-all=PyQt6',
     '--noconsole',
+    '--version-file=file_version_info.txt',
     main_script
 ])
 
