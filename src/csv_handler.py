@@ -105,6 +105,7 @@ def write_csv(data, output_path):
             df = data
 
         logger.info(f"Total records before splitting: {df.shape[0]}")
+        logger.info(f"Available columns: {df.columns.tolist()}")
 
         # Clean website URLs before writing
         if 'website_url' in df.columns:
@@ -116,30 +117,51 @@ def write_csv(data, output_path):
         if not ext:
             ext = '.csv'
 
-        # Group data by CMS type
-        if 'cms' in df.columns.str.lower():
+        # Check for CMS column (case-insensitive)
+        cms_column = None
+        for col in df.columns:
+            if col.lower() == 'cms':
+                cms_column = col
+                break
+
+        if cms_column:
+            logger.info(f"Found CMS column: {cms_column}")
             # Get unique CMS types
-            cms_types = df['cms'].unique()
+            cms_types = df[cms_column].unique()
+            logger.info(f"Found CMS types: {cms_types}")
 
             # Create a file for each CMS type
             for cms_type in cms_types:
-                # Create safe filename
-                safe_cms = cms_type.lower().replace(' ', '_')
-                if cms_type == 'Error':
-                    output_file = f"{base_path}_out_errors{ext}"
-                else:
-                    output_file = f"{base_path}_out_{safe_cms}{ext}"
-                
-                # Filter data for this CMS type
-                cms_df = df[df['cms'] == cms_type]
-                
-                # Write to file
-                cms_df.to_csv(output_file, index=False, quoting=csv.QUOTE_ALL)
-                logger.error(f"Wrote {len(cms_df)} rows to {output_file} for CMS type: {cms_type}")
+                try:
+                    # Handle None/NaN values
+                    if pd.isna(cms_type):
+                        safe_cms = 'unknown'
+                    else:
+                        # Create safe filename
+                        safe_cms = str(cms_type).lower().replace(' ', '_')
+                    
+                    if cms_type == 'Error':
+                        output_file = f"{base_path}_out_errors{ext}"
+                    else:
+                        output_file = f"{base_path}_out_{safe_cms}{ext}"
+                    
+                    # Filter data for this CMS type
+                    if pd.isna(cms_type):
+                        cms_df = df[df[cms_column].isna()]
+                    else:
+                        cms_df = df[df[cms_column] == cms_type]
+                    
+                    # Write to file
+                    cms_df.to_csv(output_file, index=False, quoting=csv.QUOTE_ALL)
+                    logger.info(f"Wrote {len(cms_df)} rows to {output_file} for CMS type: {cms_type}")
+                except Exception as e:
+                    logger.error(f"Error writing file for CMS type {cms_type}: {str(e)}")
+                    continue
         else:
-            logger.error("No 'cms' column found in data, writing all records to single file")
-            df.to_csv(output_path, index=False, quoting=csv.QUOTE_ALL)
-            logger.error(f"Wrote {len(df)} rows to {output_path}")
+            logger.info("No 'cms' column found in data, writing all records to single file")
+            output_file = f"{base_path}_out_all{ext}"
+            df.to_csv(output_file, index=False, quoting=csv.QUOTE_ALL)
+            logger.error(f"Wrote {len(df)} rows to {output_file}")
 
         return True
     except Exception as e:
